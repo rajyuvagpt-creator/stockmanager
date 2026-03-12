@@ -1,0 +1,385 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ────────────────────────────────────────────────────────────────────
+
+enum Role {
+  SHOPKEEPER
+  WHOLESALER
+  ADMIN
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+}
+
+enum ForecastType {
+  WEEKLY
+  MONTHLY
+  SEASONAL
+  FESTIVAL
+  CUSTOM
+}
+
+enum InvoiceType {
+  PURCHASE
+  SALE
+  EXPENSE
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  OVERDUE
+}
+
+enum Platform {
+  WEB
+  TELEGRAM
+}
+
+// ─── Auth & Users ─────────────────────────────────────────────────────────────
+
+model User {
+  id              String    @id @default(cuid())
+  email           String    @unique
+  phone           String?   @unique
+  passwordHash    String
+  name            String
+  role            Role      @default(SHOPKEEPER)
+  businessName    String?
+  businessType    String?
+  gstNumber       String?
+  address         String?
+  city            String?
+  state           String?
+  pincode         String?
+  latitude        Float?
+  longitude       Float?
+  profileImage    String?
+  telegramChatId  String?   @unique
+  isVerified      Boolean   @default(false)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  shop          Shop?
+  wholesaler    Wholesaler?
+  expenses      Expense[]
+  invoices      Invoice[]
+  chatSessions  ChatSession[]
+  notifications Notification[]
+}
+
+model Shop {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  shopName  String
+  category  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inventory   Inventory[]
+  orders      Order[]
+  catalogs    Catalog[]
+  saleRecords SaleRecord[]
+  forecasts   Forecast[]
+}
+
+model Wholesaler {
+  id               String   @id @default(cuid())
+  userId           String   @unique
+  companyName      String
+  supplyCategory   String[]
+  minOrderAmount   Float    @default(0)
+  deliveryRadius   Float    @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wholesalerProducts WholesalerProduct[]
+  ordersReceived    Order[]            @relation("WholesalerOrders")
+  wholesalerCatalogs WholesalerCatalog[]
+}
+
+// ─── Products & Inventory ─────────────────────────────────────────────────────
+
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  barcode      String?  @unique
+  qrCode       String?
+  category     String
+  subCategory  String?
+  brand        String?
+  unit         String   @default("piece")
+  imageUrl     String?
+  isPerishable Boolean  @default(false)
+  shelfLife    Int?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  inventory          Inventory[]
+  wholesalerProducts WholesalerProduct[]
+  priceComparisons   PriceComparison[]
+  forecastItems      ForecastItem[]
+}
+
+model Inventory {
+  id             String    @id @default(cuid())
+  shopId         String
+  productId      String
+  quantity       Float     @default(0)
+  reorderLevel   Float     @default(10)
+  maxStock       Float     @default(100)
+  purchasePrice  Float
+  sellingPrice   Float
+  mrp            Float?
+  expiryDate     DateTime?
+  batchNumber    String?
+  lastRestocked  DateTime?
+  location       String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  shop    Shop    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id])
+
+  @@unique([shopId, productId, batchNumber])
+}
+
+model WholesalerProduct {
+  id           String   @id @default(cuid())
+  wholesalerId String
+  productId    String
+  price        Float
+  bulkPrice    Float?
+  bulkMinQty   Int?
+  inStock      Boolean  @default(true)
+  moq          Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  wholesaler Wholesaler @relation(fields: [wholesalerId], references: [id], onDelete: Cascade)
+  product    Product    @relation(fields: [productId], references: [id])
+
+  @@unique([wholesalerId, productId])
+}
+
+// ─── Orders & Sales ───────────────────────────────────────────────────────────
+
+model Order {
+  id           String      @id @default(cuid())
+  shopId       String
+  wholesalerId String
+  status       OrderStatus @default(PENDING)
+  totalAmount  Float
+  notes        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  shop       Shop       @relation(fields: [shopId], references: [id])
+  wholesaler Wholesaler @relation("WholesalerOrders", fields: [wholesalerId], references: [id])
+  items      OrderItem[]
+  invoice    Invoice?
+}
+
+model OrderItem {
+  id        String @id @default(cuid())
+  orderId   String
+  productId String
+  quantity  Float
+  unitPrice Float
+  total     Float
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+model SaleRecord {
+  id           String   @id @default(cuid())
+  shopId       String
+  productId    String
+  quantity     Float
+  unitPrice    Float
+  total        Float
+  customerName String?
+  paymentMode  String   @default("cash")
+  soldAt       DateTime @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id])
+}
+
+// ─── AI Forecasting ───────────────────────────────────────────────────────────
+
+model Forecast {
+  id           String       @id @default(cuid())
+  shopId       String
+  forecastType ForecastType
+  season       String?
+  location     String?
+  startDate    DateTime
+  endDate      DateTime
+  confidence   Float        @default(0)
+  generatedAt  DateTime     @default(now())
+
+  shop          Shop           @relation(fields: [shopId], references: [id])
+  forecastItems ForecastItem[]
+}
+
+model ForecastItem {
+  id              String @id @default(cuid())
+  forecastId      String
+  productId       String
+  predictedDemand Float
+  suggestedOrder  Float
+  currentStock    Float
+  reasoning       String?
+
+  forecast Forecast @relation(fields: [forecastId], references: [id], onDelete: Cascade)
+  product  Product  @relation(fields: [productId], references: [id])
+}
+
+// ─── Price Comparison ─────────────────────────────────────────────────────────
+
+model PriceComparison {
+  id             String   @id @default(cuid())
+  productId      String
+  wholesalerName String
+  wholesalerId   String?
+  price          Float
+  bulkPrice      Float?
+  lastChecked    DateTime @default(now())
+  source         String   @default("manual")
+
+  product Product @relation(fields: [productId], references: [id])
+}
+
+// ─── Billing & Accounting ─────────────────────────────────────────────────────
+
+model Invoice {
+  id                String        @id @default(cuid())
+  userId            String
+  orderId           String?       @unique
+  invoiceNumber     String        @unique
+  type              InvoiceType
+  totalAmount       Float
+  taxAmount         Float         @default(0)
+  discountAmount    Float         @default(0)
+  netAmount         Float
+  status            InvoiceStatus @default(UNPAID)
+  razorpayOrderId   String?
+  razorpayPaymentId String?
+  pdfUrl            String?
+  dueDate           DateTime?
+  createdAt         DateTime      @default(now())
+
+  user  User   @relation(fields: [userId], references: [id])
+  order Order? @relation(fields: [orderId], references: [id])
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  userId      String
+  category    String
+  description String?
+  amount      Float
+  date        DateTime
+  receiptUrl  String?
+  recurring   Boolean  @default(false)
+  frequency   String?
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// ─── Catalog & Marketing ─────────────────────────────────────────────────────
+
+model Catalog {
+  id          String   @id @default(cuid())
+  shopId      String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime @default(now())
+
+  shop  Shop          @relation(fields: [shopId], references: [id])
+  items CatalogItem[]
+}
+
+model CatalogItem {
+  id         String  @id @default(cuid())
+  catalogId  String
+  productId  String
+  price      Float
+  salePrice  Float?
+  isOnSale   Boolean @default(false)
+
+  catalog Catalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+}
+
+model WholesalerCatalog {
+  id           String   @id @default(cuid())
+  wholesalerId String
+  name         String
+  description  String?
+  isActive     Boolean  @default(true)
+  pdfUrl       String?
+  createdAt    DateTime @default(now())
+
+  wholesaler Wholesaler @relation(fields: [wholesalerId], references: [id])
+}
+
+// ─── AI Chatbot ───────────────────────────────────────────────────────────────
+
+model ChatSession {
+  id        String    @id @default(cuid())
+  userId    String
+  platform  Platform  @default(WEB)
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+
+  user     User          @relation(fields: [userId], references: [id])
+  messages ChatMessage[]
+}
+
+model ChatMessage {
+  id          String   @id @default(cuid())
+  sessionId   String
+  role        String
+  content     String
+  actionTaken String?
+  timestamp   DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+}
+
+// ─── Notifications ────────────────────────────────────────────────────────────
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  type      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
